@@ -7,12 +7,15 @@ from torch import nn
 from torch.nn import functional as F
 from layers import ConvNorm, LinearNorm
 from utils import to_gpu, get_mask_from_lengths
-from modules import GST
+from modules import GST,TST
 
 drop_rate = 0.5
 
 def load_model(hparams):
-    model = Tacotron2(hparams).cuda()
+    if hparams.episodic_training:
+        model = EpisodicTacotron(hparams).cuda()
+    else:
+        model = Tacotron2(hparams).cuda()
     if hparams.fp16_run:
         model.decoder.attention_layer.score_mask_value = finfo('float16').min
 
@@ -681,3 +684,107 @@ class Tacotron2(nn.Module):
 
         return self.parse_output(
             [mel_outputs, mel_outputs_postnet, gate_outputs, alignments])
+
+
+
+class EpisodicTacotron(Tacotron2):
+
+    def __init__(self, hparams):
+        super(Tacotron2, self).__init__()
+        #hparams.speaker_embedding_dim = 0
+        self.mask_padding = hparams.mask_padding
+        self.fp16_run = hparams.fp16_run
+        self.n_mel_channels = hparams.n_mel_channels
+        self.n_frames_per_step = hparams.n_frames_per_step
+        self.embedding = nn.Embedding(
+            hparams.n_symbols, hparams.symbols_embedding_dim)
+        std = sqrt(2.0 / (hparams.n_symbols + hparams.symbols_embedding_dim))
+        val = sqrt(3.0) * std  # uniform bounds for std
+        self.embedding.weight.data.uniform_(-val, val)
+        self.encoder = Encoder(hparams)
+        self.decoder = Decoder(hparams)
+        self.postnet = Postnet(hparams)
+
+        self.gst = TST(hparams)
+        self.speaker_embedding_size = hparams.speaker_embedding_dim
+
+    def parse_batch(self, batch):
+        batch['query'] = self._parse_subbatch(batch['query'])
+        batch['support'] = self._parse_subbatch(batch['support'])
+        return batch, (batch['query']['mel_padded'], batch['query']['gate_padded'])
+
+    def _parse_subbatch(self, batch):
+        d = {}
+        d['text_padded']    = to_gpu(batch['text_padded']).long()
+        d['input_lengths']  = to_gpu(batch['input_lengths']).long()
+        d['max_len']        = torch.max(batch['input_lengths'].data).item()
+        d['mel_padded']     = to_gpu(batch['mel_padded']).float()
+        d['gate_padded']    = to_gpu(batch['gate_padded']).float()
+        d['output_lengths'] = to_gpu(batch['output_lengths']).long()
+        d['speaker_ids']    = to_gpu(batch['speaker_ids'].data).long()
+        d['f0_padded']      = to_gpu(batch['f0_padded']).float()
+        return d
+
+    def forward(self, inputs):
+        text            = inputs['query']['text_padded']
+        text_lengths    = inputs['query']['input_lengths'].data
+        targets         = inputs['query']['mel_padded']
+        max_len         = inputs['query']['max_len']
+        output_lengths  = inputs['query']['output_lengths'].data
+        speaker_ids     = inputs['query']['speaker_ids']
+        f0s             = inputs['query']['f0_padded']
+
+        ref_mels        = inputs['support']['mel_padded']
+
+        embedded_inputs = self.embedding(text).transpose(1, 2)
+        embedded_text = self.encoder(embedded_inputs, text_lengths)
+
+        embedded_gst = self.gst(ref_mels, embedded_text)
+        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
+                embedded_gst.size(1), self.speaker_embedding_size)
+
+        encoder_outputs = torch.cat(
+            (embedded_text, embedded_gst, embedded_speakers), dim=2)
+
+        mel_outputs, gate_outputs, alignments = self.decoder(
+            encoder_outputs, targets, memory_lengths=text_lengths, f0s=f0s)
+
+        mel_outputs_postnet = self.postnet(mel_outputs)
+        mel_outputs_postnet = mel_outputs + mel_outputs_postnet
+
+        return self.parse_output(
+            [mel_outputs, mel_outputs_postnet, gate_outputs, alignments],
+            output_lengths)
+        
+
+    def inference(self, inputs):
+
+        text = inputs['query']['text_padded'] # torch cuda
+        ref_mels = inputs['support']['mel_padded'] # torch cuda
+        
+        embedded_inputs = self.embedding(text).transpose(1, 2)
+        embedded_text = self.encoder.inference(embedded_inputs)
+
+        embedded_gst = self.gst(ref_mels, embedded_text)
+        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
+                embedded_gst.size(1), self.speaker_embedding_size)
+
+        encoder_outputs = torch.cat(
+            (embedded_text, embedded_gst, embedded_speakers), dim=2)
+
+        f0s = embedded_gst.new_ones(embedded_gst.size(0), 1, text.size(1) * 6)
+        
+        mel_outputs, gate_outputs, alignments = self.decoder.inference(encoder_outputs, f0s)
+        mel_outputs_postnet = self.postnet(mel_outputs)
+        mel_outputs_postnet = mel_outputs + mel_outputs_postnet
+        return self.parse_output(
+                [mel_outputs, mel_outputs_postnet, gate_outputs, alignments])
+
+
+
+
+
+
+
+
+#

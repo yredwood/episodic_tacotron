@@ -9,12 +9,12 @@ def create_hparams(hparams_string=None, verbose=False):
         ################################
         # Experiment Parameters        #
         ################################
-        epochs=50000,
-        iters_per_checkpoint=500,
+        epochs=500,
+        iters_per_checkpoint=1000,
         seed=1234,
         dynamic_loss_scaling=True,
         fp16_run=False,
-        distributed_run=False,
+        distributed_run=True,
         dist_backend="nccl",
         dist_url="tcp://localhost:54321",
         cudnn_enabled=True,
@@ -24,8 +24,10 @@ def create_hparams(hparams_string=None, verbose=False):
         ################################
         # Data Parameters             #
         ################################
-        training_files='filelists/ljs_audiopaths_text_sid_train_filelist.txt',
-        validation_files='filelists/ljs_audiopaths_text_sid_val_filelist.txt',
+        #training_files='filelists/ljs_audiopaths_text_sid_train_filelist.txt',
+        #validation_files='filelists/ljs_audiopaths_text_sid_val_filelist.txt',
+        training_files='filelists/libri100_train.txt',
+        validation_files='filelists/libri100_val.txt',
         text_cleaners=['english_cleaners'],
         p_arpabet=1.0,
         cmudict_path="data/cmu_dictionary",
@@ -34,7 +36,7 @@ def create_hparams(hparams_string=None, verbose=False):
         # Audio Parameters             #
         ################################
         max_wav_value=32768.0,
-        sampling_rate=22050,
+        sampling_rate=24000,
         filter_length=1024,
         hop_length=256,
         win_length=1024,
@@ -107,11 +109,22 @@ def create_hparams(hparams_string=None, verbose=False):
         use_saved_learning_rate=False,
         learning_rate=1e-3,
         learning_rate_min=1e-5,
-        learning_rate_anneal=50000,
+        learning_rate_anneal=10000, # in steps
         weight_decay=1e-6,
         grad_clip_thresh=1.0,
         batch_size=32,
         mask_padding=True,  # set model's padded outputs to padded values
+
+
+        ################################
+        # Episodic Training Parameters #
+        ################################
+        episodic_training = True,
+        with_tst = True,
+        num_common = 8,
+        num_support = 8,
+        num_query = 16,
+        context_gru = True,
 
     )
 

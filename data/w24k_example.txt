@@ -1,0 +1,4 @@
+data-bin/train-clean-100/8088/284756/8088_284756_000001_000002.wav|Rum-runners, seeking out their hidden port with their cargo of contraband from Cuba.|8088
+data-bin/train-clean-100/6367/74004/6367_74004_000006_000000.wav|Sylvia Grant did go down the street, however.|6367
+data-bin/train-clean-100/3879/174923/3879_174923_000032_000003.wav|But Barrington seems to think that you managed as well as you did by getting outside the traces, as he calls it.|3879
+data-bin/train-clean-100/40/222/40_222_000023_000003.wav|I think you must be deceived so far.|40
