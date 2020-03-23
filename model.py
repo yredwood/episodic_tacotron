@@ -7,8 +7,9 @@ from torch import nn
 from torch.nn import functional as F
 from layers import ConvNorm, LinearNorm
 from utils import to_gpu, get_mask_from_lengths
-from modules import GST,TST
+from modules import GST,TransformerStyleTokenLayer
 
+import pdb
 drop_rate = 0.5
 
 def load_model(hparams):
@@ -222,7 +223,7 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.n_mel_channels = hparams.n_mel_channels
         self.n_frames_per_step = hparams.n_frames_per_step
-        self.encoder_embedding_dim = hparams.encoder_embedding_dim + hparams.token_embedding_size + hparams.speaker_embedding_dim
+        self.encoder_embedding_dim = hparams.encoder_embedding_dim + hparams.token_embedding_size
         self.attention_rnn_dim = hparams.attention_rnn_dim
         self.decoder_rnn_dim = hparams.decoder_rnn_dim
         self.prenet_dim = hparams.prenet_dim
@@ -232,18 +233,19 @@ class Decoder(nn.Module):
         self.p_decoder_dropout = hparams.p_decoder_dropout
         self.p_teacher_forcing = hparams.p_teacher_forcing
 
-        self.prenet_f0 = ConvNorm(
-            1, hparams.prenet_f0_dim,
-            kernel_size=hparams.prenet_f0_kernel_size,
-            padding=max(0, int(hparams.prenet_f0_kernel_size/2)),
-            bias=False, stride=1, dilation=1)
+#        self.prenet_f0 = ConvNorm(
+#            1, hparams.prenet_f0_dim,
+#            kernel_size=hparams.prenet_f0_kernel_size,
+#            padding=max(0, int(hparams.prenet_f0_kernel_size/2)),
+#            bias=False, stride=1, dilation=1)
+        self.f0_size = hparams.prenet_f0_dim
 
         self.prenet = Prenet(
             hparams.n_mel_channels * hparams.n_frames_per_step,
             [hparams.prenet_dim, hparams.prenet_dim])
 
         self.attention_rnn = nn.LSTMCell(
-            hparams.prenet_dim + hparams.prenet_f0_dim + self.encoder_embedding_dim,
+            hparams.prenet_dim + self.encoder_embedding_dim + hparams.prenet_f0_dim,
             hparams.attention_rnn_dim)
 
         self.attention_layer = Attention(
@@ -278,10 +280,10 @@ class Decoder(nn.Module):
             B, self.n_mel_channels * self.n_frames_per_step).zero_())
         return decoder_input
 
-    def get_end_f0(self, f0s):
-        B = f0s.size(0)
-        dummy = Variable(f0s.data.new(B, 1, f0s.size(1)).zero_())
-        return dummy
+#    def get_end_f0(self, f0s):
+#        B = f0s.size(0)
+#        dummy = Variable(f0s.data.new(B, 1, f0s.size(1)).zero_())
+#        return dummy
 
     def initialize_decoder_states(self, memory, mask):
         """ Initializes attention rnn states, decoder rnn states, attention
@@ -415,7 +417,7 @@ class Decoder(nn.Module):
         gate_prediction = self.gate_layer(decoder_hidden_attention_context)
         return decoder_output, gate_prediction, self.attention_weights
 
-    def forward(self, memory, decoder_inputs, memory_lengths, f0s):
+    def forward(self, memory, decoder_inputs, memory_lengths):
         """ Decoder forward pass for training
         PARAMS
         ------
@@ -436,22 +438,32 @@ class Decoder(nn.Module):
         decoder_inputs = self.prenet(decoder_inputs)
 
         # audio features
-        f0_dummy = self.get_end_f0(f0s)
-        f0s = torch.cat((f0s, f0_dummy), dim=2)
-        f0s = F.relu(self.prenet_f0(f0s))
-        f0s = f0s.permute(2, 0, 1)
+#        f0_dummy = self.get_end_f0(f0s)
+#        f0s = torch.cat((f0s, f0_dummy), dim=2)
+#        f0s = F.relu(self.prenet_f0(f0s))
+#        f0s = f0s.permute(2, 0, 1)
+        f0 = memory.new_zeros(
+                memory.size(0), # batch_size
+                self.f0_size # dummy f0 for using pretrained model
+        )
 
         self.initialize_decoder_states(
             memory, mask=~get_mask_from_lengths(memory_lengths))
 
         mel_outputs, gate_outputs, alignments = [], [], []
         while len(mel_outputs) < decoder_inputs.size(0) - 1:
-            if len(mel_outputs) == 0 or np.random.uniform(0.0, 1.0) <= self.p_teacher_forcing:
-                decoder_input = torch.cat((decoder_inputs[len(mel_outputs)],
-                                           f0s[len(mel_outputs)]), dim=1)
+#            if len(mel_outputs) == 0 or np.random.uniform(0.0, 1.0) <= self.p_teacher_forcing:
+#                decoder_input = torch.cat((decoder_inputs[len(mel_outputs)],
+#                                           f0s[len(mel_outputs)]), dim=1)
+#            else:
+#                decoder_input = torch.cat((self.prenet(mel_outputs[-1]),
+#                                           f0s[len(mel_outputs)]), dim=1)
+            if len(mel_outputs) == 0 or np.random.uniform(0.0, 1.0) < self.p_teacher_forcing:
+                decoder_input = torch.cat((decoder_inputs[len(mel_outputs)], f0), dim=1)
+
             else:
-                decoder_input = torch.cat((self.prenet(mel_outputs[-1]),
-                                           f0s[len(mel_outputs)]), dim=1)
+                decoder_input = torch.cat((self.prenet(mel_outputs[-1]), f0), dim=1)
+
             mel_output, gate_output, attention_weights = self.decode(
                 decoder_input)
             mel_outputs += [mel_output.squeeze(1)]
@@ -463,7 +475,7 @@ class Decoder(nn.Module):
 
         return mel_outputs, gate_outputs, alignments
 
-    def inference(self, memory, f0s):
+    def inference(self, memory):
         """ Decoder inference
         PARAMS
         ------
@@ -478,18 +490,21 @@ class Decoder(nn.Module):
         decoder_input = self.get_go_frame(memory)
 
         self.initialize_decoder_states(memory, mask=None)
-        f0_dummy = self.get_end_f0(f0s)
-        f0s = torch.cat((f0s, f0_dummy), dim=2)
-        f0s = F.relu(self.prenet_f0(f0s))
-        f0s = f0s.permute(2, 0, 1)
+#        f0_dummy = self.get_end_f0(f0s)
+#        f0s = torch.cat((f0s, f0_dummy), dim=2)
+#        f0s = F.relu(self.prenet_f0(f0s))
+#        f0s = f0s.permute(2, 0, 1)
 
         mel_outputs, gate_outputs, alignments = [], [], []
         while True:
-            if len(mel_outputs) < len(f0s):
-                f0 = f0s[len(mel_outputs)]
-            else:
-                f0 = f0s[-1] * 0
-
+#            if len(mel_outputs) < len(f0s):
+#                f0 = f0s[len(mel_outputs)]
+#            else:
+#                f0 = f0s[-1] * 0
+            f0 = memory.new_zeros(
+                    memory.size(0), # batch_size
+                    self.f0_size # dummy f0 for using pretrained model
+            )
             decoder_input = torch.cat((self.prenet(decoder_input), f0), dim=1)
             mel_output, gate_output, alignment = self.decode(decoder_input)
 
@@ -510,7 +525,7 @@ class Decoder(nn.Module):
 
         return mel_outputs, gate_outputs, alignments
 
-    def inference_noattention(self, memory, f0s, attention_map):
+    def inference_noattention(self, memory, attention_map):
         """ Decoder inference
         PARAMS
         ------
@@ -525,16 +540,22 @@ class Decoder(nn.Module):
         decoder_input = self.get_go_frame(memory)
 
         self.initialize_decoder_states(memory, mask=None)
-        f0_dummy = self.get_end_f0(f0s)
-        f0s = torch.cat((f0s, f0_dummy), dim=2)
-        f0s = F.relu(self.prenet_f0(f0s))
-        f0s = f0s.permute(2, 0, 1)
+#        f0_dummy = self.get_end_f0(f0s)
+#        f0s = torch.cat((f0s, f0_dummy), dim=2)
+#        f0s = F.relu(self.prenet_f0(f0s))
+#        f0s = f0s.permute(2, 0, 1)
+        f0 = memory.new_zeros(
+                memory.size(0), # batch_size
+                self.f0_size # dummy f0 for using pretrained model
+        )
+        decoder_input = torch.cat((self.prenet(decoder_input), f0), dim=1)
+        mel_output, gate_output, alignment = self.decode(decoder_input)
 
         mel_outputs, gate_outputs, alignments = [], [], []
         for i in range(len(attention_map)):
-            f0 = f0s[i]
+#            f0 = f0s[i]
             attention = attention_map[i]
-            decoder_input = torch.cat((self.prenet(decoder_input), f0), dim=1)
+            #decoder_input = torch.cat((self.prenet(decoder_input), f0), dim=1)
             mel_output, gate_output, alignment = self.decode(decoder_input, attention)
 
             mel_outputs += [mel_output.squeeze(1)]
@@ -705,7 +726,8 @@ class EpisodicTacotron(Tacotron2):
         self.decoder = Decoder(hparams)
         self.postnet = Postnet(hparams)
 
-        self.gst = TST(hparams)
+        #self.gst = TST(hparams)
+        self.gst = TransformerStyleTokenLayer(hparams)
         self.speaker_embedding_size = hparams.speaker_embedding_dim
 
     def parse_batch(self, batch):
@@ -722,7 +744,7 @@ class EpisodicTacotron(Tacotron2):
         d['gate_padded']    = to_gpu(batch['gate_padded']).float()
         d['output_lengths'] = to_gpu(batch['output_lengths']).long()
         d['speaker_ids']    = to_gpu(batch['speaker_ids'].data).long()
-        d['f0_padded']      = to_gpu(batch['f0_padded']).float()
+        #d['f0_padded']      = to_gpu(batch['f0_padded']).float()
         return d
 
     def forward(self, inputs):
@@ -732,22 +754,29 @@ class EpisodicTacotron(Tacotron2):
         max_len         = inputs['query']['max_len']
         output_lengths  = inputs['query']['output_lengths'].data
         speaker_ids     = inputs['query']['speaker_ids']
-        f0s             = inputs['query']['f0_padded']
 
         ref_mels        = inputs['support']['mel_padded']
+        ref_text        = inputs['support']['text_padded']
+        ref_text_lengths= inputs['support']['input_lengths'].data
 
         embedded_inputs = self.embedding(text).transpose(1, 2)
-        embedded_text = self.encoder(embedded_inputs, text_lengths)
+        embedded_text = self.encoder(embedded_inputs, text_lengths) # bsz, 512, t
 
-        embedded_gst = self.gst(ref_mels, embedded_text)
-        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
-                embedded_gst.size(1), self.speaker_embedding_size)
+        ref_inputs = self.embedding(ref_text).transpose(1, 2)
+        ref_embedded_text = self.encoder(ref_inputs, ref_text_lengths) # bsz_s, 512, t2
+
+        embedded_gst = self.gst(embedded_text, text_lengths,
+                ref_mels, ref_embedded_text, ref_text_lengths)
+
+#        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
+#                embedded_gst.size(1), self.speaker_embedding_size)
 
         encoder_outputs = torch.cat(
-            (embedded_text, embedded_gst, embedded_speakers), dim=2)
+            (embedded_text, embedded_gst), dim=2)
+
 
         mel_outputs, gate_outputs, alignments = self.decoder(
-            encoder_outputs, targets, memory_lengths=text_lengths, f0s=f0s)
+            encoder_outputs, targets, memory_lengths=text_lengths)
 
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
@@ -759,22 +788,26 @@ class EpisodicTacotron(Tacotron2):
 
     def inference(self, inputs):
 
-        text = inputs['query']['text_padded'] # torch cuda
-        ref_mels = inputs['support']['mel_padded'] # torch cuda
+        text            = inputs['query']['text_padded'] # torch cuda
+        ref_mels        = inputs['support']['mel_padded'] # torch cuda
+        ref_text        = inputs['support']['text_padded']
+        ref_text_lengths= inputs['support']['input_lengths'].data
         
         embedded_inputs = self.embedding(text).transpose(1, 2)
         embedded_text = self.encoder.inference(embedded_inputs)
 
-        embedded_gst = self.gst(ref_mels, embedded_text)
+        ref_inputs = self.embedding(ref_text).transpose(1, 2)
+        ref_embedded_text = self.encoder(ref_inputs, ref_text_lengths)
+
+        embedded_gst = self.gst(embedded_text, ref_mels, ref_embedded_text)
         embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
                 embedded_gst.size(1), self.speaker_embedding_size)
 
         encoder_outputs = torch.cat(
             (embedded_text, embedded_gst, embedded_speakers), dim=2)
 
-        f0s = embedded_gst.new_ones(embedded_gst.size(0), 1, text.size(1) * 6)
         
-        mel_outputs, gate_outputs, alignments = self.decoder.inference(encoder_outputs, f0s)
+        mel_outputs, gate_outputs, alignments = self.decoder.inference(encoder_outputs)
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet
         return self.parse_output(

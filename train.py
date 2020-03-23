@@ -114,12 +114,24 @@ def warm_start_model(checkpoint_path, model, ignore_layers):
     model_dict = checkpoint_dict['state_dict']
 
     # ### restore only if the param is in current model ###
-    if len(ignore_layers) > 0:
-        model_dict = {k: v for k, v in model_dict.items()
-                      if (k not in ignore_layers) and (k in model.state_dict())}
-        dummy_dict = model.state_dict()
-        dummy_dict.update(model_dict)
-        model_dict = dummy_dict
+#        model_dict = {k: v for k, v in model_dict.items()
+#                      if (k not in ignore_layers) and (k in model.state_dict())}
+#        for k, v in model_dict.items():
+#            print ('layer {} restored: {}'.format(k, v.size()))
+    restore_dict = {}
+    for k, v in model_dict.items():
+        if (k not in ignore_layers) and (k in model.state_dict()):
+            if v.shape == model.state_dict()[k].shape:
+                print ('Layer {} restored: {}'.format(k, v.shape))
+                restore_dict[k] = v
+            else:
+                print ('---- {} NOT restored; shape different'.format(k))
+        else:
+            print ('---- {} NOT restored; not in current model'.format(k))
+
+    dummy_dict = model.state_dict()
+    dummy_dict.update(restore_dict)
+    model_dict = dummy_dict
     model.load_state_dict(model_dict)
     return model
 
@@ -244,13 +256,17 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
                     hparams.learning_rate_min, learning_rate * 0.5)
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = learning_rate
-
+            
             model.zero_grad()
+            dplist = batch['support']['datapath']
+            logstr = '||STEP {}, rank {} ||'.format(i, rank)
+            logstr += 'SUPPORTS: ' +'\n'.join(dplist) + '\n'
+            dplist = batch['query']['datapath']
+            logstr += 'QUERIES: ' + '\n'.join(dplist) + '\n'
+            with open('logs/rk{}.logs'.format(rank), 'at') as f:
+                f.writelines(logstr + '\n\n')
+
             x, y = model.parse_batch(batch)
-#            logstr = ('step: {} | rank: {} | sid: {}'.format(
-#                i, rank, x['query']['speaker_ids'])) # debug
-#            with open('logs/rk{}.logs'.format(rank), 'at') as f:
-#                f.writelines(logstr + '\n')
             y_pred = model(x)
 
             loss = criterion(y_pred, y)
@@ -317,6 +333,7 @@ if __name__ == '__main__':
                         required=False, help='Distributed group name')
     parser.add_argument('--hparams', type=str,
                         required=False, help='comma separated name=value pairs')
+
 
     args = parser.parse_args()
     hparams = create_hparams(args.hparams)

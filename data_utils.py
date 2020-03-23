@@ -264,9 +264,9 @@ class EpisodicLoader(TextMelLoader):
 #                         self.f0_max, self.harm_thresh)
 #        f0 = torch.from_numpy(f0)[None]
 #        f0 = f0[:, :melspec.size(1)]
-        f0 = melspec.new_ones(1, melspec.size(1))
+#        f0 = melspec.new_ones(1, melspec.size(1))
 
-        return melspec, f0
+        return melspec
 
     def get_text(self, text):
         text_norm = torch.IntTensor(
@@ -277,9 +277,9 @@ class EpisodicLoader(TextMelLoader):
     def __getitem__(self, index):
         audiopath, text, speaker = self.audiopaths_and_text[index]
         text = self.get_text(text)
-        mel, f0 = self.get_mel_and_f0(audiopath)
+        mel = self.get_mel_and_f0(audiopath)
         speaker_id = self.get_speaker_id(speaker)
-        return (text, mel, speaker_id, f0)
+        return (text, mel, speaker_id, audiopath)
 
 
 class EpisodicBatchSampler():
@@ -362,6 +362,11 @@ class DistributedEpisodicSampler():
     def set_epoch(self, epoch):
         self.epoch = epoch
 
+    def __len__(self):
+        size = [len(self.iterdict[sid]) // self.batch_size for sid in self.iterdict]
+        return sum(size)
+
+
         
 class EpisodicCollater():
     def __init__(self, n_frames_per_step, hparams):
@@ -415,8 +420,7 @@ class EpisodicCollater():
         gate_padded.zero_()
         output_lengths = torch.LongTensor(len(batch))
         speaker_ids = torch.LongTensor(len(batch))
-        f0_padded = torch.FloatTensor(len(batch), 1, max_target_len)
-        f0_padded.zero_()
+        datapath = []
 
         for i in range(len(ids_sorted_decreasing)):
             mel = batch[ids_sorted_decreasing[i]][1]
@@ -424,8 +428,7 @@ class EpisodicCollater():
             gate_padded[i, mel.size(1)-1:] = 1
             output_lengths[i] = mel.size(1)
             speaker_ids[i] = batch[ids_sorted_decreasing[i]][2]
-            f0 = batch[ids_sorted_decreasing[i]][3]
-            f0_padded[i, :, :f0.size(1)] = f0
+            datapath.append(batch[ids_sorted_decreasing[i]][3])
 
         outputs = {
             'text_padded': text_padded,
@@ -434,8 +437,8 @@ class EpisodicCollater():
             'gate_padded': gate_padded,
             'output_lengths': output_lengths,
             'speaker_ids': speaker_ids,
-            'f0_padded': f0_padded,
             'idx': ids_sorted_decreasing,
+            'datapath': datapath,
         }
         
         return outputs

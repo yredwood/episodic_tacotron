@@ -16,7 +16,7 @@ def create_hparams(hparams_string=None, verbose=False):
         fp16_run=False,
         distributed_run=True,
         dist_backend="nccl",
-        dist_url="tcp://localhost:54321",
+        dist_url="tcp://localhost:54324",
         cudnn_enabled=True,
         cudnn_benchmark=False,
         ignore_layers=['speaker_embedding.weight'],
@@ -92,21 +92,21 @@ def create_hparams(hparams_string=None, verbose=False):
 
         # Reference encoder
         with_gst=True,
-        ref_enc_filters=[32, 32, 64, 64, 128, 128],
+        ref_enc_filters=[32, 32, 64, 64, 128, 128, 256, 256, 512],
         ref_enc_size=[3, 3],
         ref_enc_strides=[2, 2],
         ref_enc_pad=[1, 1],
-        ref_enc_gru_size=128,
+        ref_enc_gru_size=512,
 
         # Style Token Layer
-        token_embedding_size=256,
+        token_embedding_size=512,
         token_num=10,
         num_heads=8,
 
         ################################
         # Optimization Hyperparameters #
         ################################
-        use_saved_learning_rate=False,
+        use_saved_learning_rate=True,
         learning_rate=1e-3,
         learning_rate_min=1e-5,
         learning_rate_anneal=10000, # in steps
@@ -120,11 +120,10 @@ def create_hparams(hparams_string=None, verbose=False):
         # Episodic Training Parameters #
         ################################
         episodic_training = True,
-        with_tst = True,
         num_common = 8,
         num_support = 8,
         num_query = 16,
-        context_gru = True,
+        tfs_type = 'single',
 
     )
 

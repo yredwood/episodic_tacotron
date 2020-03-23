@@ -25,9 +25,11 @@ import pdb
 
 
 # ========== parameters ===========
-checkpoint_path = 'models/tst_tacotron2_ctxgru/checkpoint_14000'
+checkpoint_path = 'models/tst_tacotron2_8816_single_2_pretrained/checkpoint_31000'
 waveglow_path = 'models/waveglow_256channels_v4.pt'
+#waveglow_path = '/home/mike/models/waveglow/waveglow_80000'
 audio_path = 'filelists/libri100_val.txt'
+num_support_save = 2
 
 test_text_list = [
     'AITRICS leads the race to optimized precision care, strengthening and trust.',
@@ -39,8 +41,8 @@ test_text_list = [
             + 'she could have done so with very little trouble',
 ]
 
-supportset_sid = '2952'  # m
-#supportset_sid = '1069' # f 
+#supportset_sid = '2952'  # m
+supportset_sid = '1069' # f 
 output_root = 'audios'
 
 output_dir = os.path.join(
@@ -110,42 +112,42 @@ for batch_idx in batch_sampler:
     _, _, sid = dataloader.audiopaths_and_text[batch_idx[0]]
     if sid == supportset_sid:
         break
-
-ref_idx = _batch['support']['idx'].data.tolist().index(0)
-batch, _ = model.parse_batch(_batch)
-
-# 1. save reference wav and synthesized wav from the same text
-audiopath, test_text, speaker = dataloader.audiopaths_and_text[batch_idx[0]]
-#copyfile(audiopath, os.path.join(output_dir, 'ref_true.wav'))
-fname_wav = os.path.join(output_dir, 'ref_true.wav')
-mel_outputs_postnet = batch['support']['mel_padded'][ref_idx:ref_idx+1]
-# remove pad
-mel_len = int(batch['support']['f0_padded'][ref_idx].sum().item())
-mel_outputs_postnet = mel_outputs_postnet[:,:,:mel_len]
-audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:,0]
-write(fname_wav, hparams.sampling_rate, audio[0].data.cpu().numpy())
-save_figure(mel_outputs_postnet[0].data.cpu().numpy(),
-        np.zeros((10,10)), fname_wav.replace('.wav', '.png'),
-        description=test_text)
-text_encoded = torch.LongTensor(
-        text_to_sequence(test_text,
-            hparams.text_cleaners,
-            arpabet_dict)
-        )[None,:].cuda()
-
-input_dict = {'query': {'text_padded': text_encoded},
-        'support': batch['support']}
-
-with torch.no_grad():
-    mel_outputs, mel_outputs_postnet, gate_outputs, alignments = model.inference(input_dict)
+for i in range(num_support_save):
+    ref_idx = _batch['support']['idx'].data.tolist().index(i)
+    batch, _ = model.parse_batch(_batch.copy())
+    # 1. save reference wav and synthesized wav from the same text
+    audiopath, test_text, speaker = dataloader.audiopaths_and_text[batch_idx[i]]
+    #copyfile(audiopath, os.path.join(output_dir, 'ref_true.wav'))
+    fname_wav = os.path.join(output_dir, 'ref_true_{}.wav'.format(i))
+    mel_outputs_postnet = batch['support']['mel_padded'][ref_idx:ref_idx+1]
+    # remove pad
+    #mel_len = int(batch['support']['f0_padded'][ref_idx].sum().item())
+    mel_len = (mel_outputs_postnet.mean(1) != 0).sum()
+    mel_outputs_postnet = mel_outputs_postnet[:,:,:mel_len]
     audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:,0]
+    write(fname_wav, hparams.sampling_rate, audio[0].data.cpu().numpy())
+    save_figure(mel_outputs_postnet[0].data.cpu().numpy(),
+            np.zeros((10,10)), fname_wav.replace('.wav', '.png'),
+            description=test_text)
+    text_encoded = torch.LongTensor(
+            text_to_sequence(test_text,
+                hparams.text_cleaners,
+                arpabet_dict)
+            )[None,:].cuda()
 
-fname_wav = os.path.join(output_dir, 'ref_pred.wav')
-write(fname_wav, hparams.sampling_rate, audio[0].data.cpu().numpy())
-save_figure(mel_outputs_postnet[0].data.cpu().numpy(), 
-        alignments[0].data.cpu().numpy(), fname_wav.replace('.wav', '.png'), 
-    description=test_text)
-print (test_text)
+    input_dict = {'query': {'text_padded': text_encoded},
+            'support': batch['support']}
+
+    with torch.no_grad():
+        mel_outputs, mel_outputs_postnet, gate_outputs, alignments = model.inference(input_dict)
+        audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:,0]
+
+    fname_wav = os.path.join(output_dir, 'ref_pred_{}.wav'.format(i))
+    write(fname_wav, hparams.sampling_rate, audio[0].data.cpu().numpy())
+    save_figure(mel_outputs_postnet[0].data.cpu().numpy(), 
+            alignments[0].data.cpu().numpy(), fname_wav.replace('.wav', '.png'), 
+        description=test_text)
+    print (test_text)
 
 
 for tidx, test_text in enumerate(test_text_list):
@@ -187,5 +189,4 @@ for tidx, test_text in enumerate(test_text_list):
 
 
 
-
-pdb.set_trace()
+#
