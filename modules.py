@@ -166,19 +166,19 @@ class TransformerStyleTokenLayer(nn.Module):
             self.mab1 = MAB_qkv(hp.encoder_embedding_dim,
                     hp.encoder_embedding_dim,
                     hp.ref_enc_gru_size,
-                    hp.token_embedding_size, p=0.5, num_heads=hp.num_heads)
+                    hp.token_embedding_size, num_heads=hp.num_heads)
 
 
     def forward(self, text, text_len, rmel, rtext, rtext_len):
-        mel_emb = self.encoder(rmel)
-        mel_emb = mel_emb.unsqueeze(1)
-        mel_emb = mel_emb.transpose(0,1).repeat(text.size(0),1,1) # bsz, bsz_s, d
-        
+        mel_emb = self.encoder(rmel) # bsz_s, d
+        mel_emb = mel_emb.unsqueeze(0).repeat(text.size(0),1,1) # bsz, bsz_s, d
+
         text_len = text_len.cpu().numpy()
         _tp = nn.utils.rnn.pack_padded_sequence(
                 text, text_len, batch_first=True)
         self.context_gru.flatten_parameters()
         _, query = self.context_gru(_tp)
+
 
         rtext_len = rtext_len.cpu().numpy()
         _tp = nn.utils.rnn.pack_padded_sequence(
@@ -198,77 +198,6 @@ class TransformerStyleTokenLayer(nn.Module):
 #            pdb.set_trace()
 
             return st.repeat(1, text.size(1), 1) 
-
-
-        
-#        if self.tfs_type == 'dual':
-#            _, query = self.context_gru(context)  # 1,bsz,d
-#            _, key = self.context_gru(refcontext) # 1,bszs,d
-#            # change to cat later
-#
-#            st1, attn = self.mab1(query.transpose(0,1),
-#                    key.repeat(context.size(0),1,1),
-#                    mel_emb, get_attn=True) # (bsz,1,d), global style
-#
-#            st1 = st1.repeat(1, context.size(1), 1)
-#            
-#            st2 = self.mab2(context,
-#                    key.repeat(context.size(0),1,1),
-#                    mel_emb) # token-wise style
-#            return torch.cat((st1, st2), dim=-1)
-#
-#        elif self.tfs_type == 'single':
-#            _, query = self.context_gru(context)  # 1,bsz,d
-#            _, key = self.context_gru(refcontext) # 1,bszs,d
-#            # change to cat later
-#
-#            st, attn = self.mab1(query.transpose(0,1),
-#                    key.repeat(context.size(0),1,1),
-#                    mel_emb, get_attn=True) # (bsz,1,d)
-#            _attn = attn.reshape(st.size(0),-1,attn.size(-1)).mean(1)
-#            pdb.set_trace()
-#            return st.repeat(1,context.size(1),1)
-#
-
-        
-class TST(nn.Module):
-    # TransformerStyleToken
-    def __init__(self, hp):
-        super().__init__()
-        self.encoder_mel = ReferenceEncoder(hp) # output: ref_enc_gru_size
-#        self.isab = ISAB(hp.token_embedding_size // 2, hp.token_embedding_size, hp.token_num,
-#                num_heads=hp.num_heads, p=0.5)
-        self.mab = MAB(hp.encoder_embedding_dim, hp.ref_enc_gru_size, hp.token_embedding_size, p=0.5)
-        
-        if hp.context_gru:
-            self.context_gru = nn.GRU(input_size=hp.encoder_embedding_dim,
-                    hidden_size=hp.encoder_embedding_dim, batch_first=True)
-        else:
-            self.context_gru = None
-
-    def forward(self, refmel, context):
-        '''
-        refmel: bsz_support, 80, T_signal
-        context: bsz, T_text, encoder_embedding_dim
-        '''
-
-        # context (text_embedding): (bsz, t, d)
-        mel_emb = self.encoder_mel(refmel) # (bsz_s, d)
-        #mel_emb = self.isab(mel_emb.unsqueeze(1)) # (bsz_s, 1, d)
-        mel_emb = mel_emb.unsqueeze(1)
-        mel_emb = mel_emb.transpose(0,1).repeat(context.size(0),1,1) # bsz, bsz_s, d
-
-        if self.context_gru is None:
-            st, attn = self.mab(context, mel_emb, get_attn=True) # (bsz,1,d)
-#            _attn = attn.reshape(st.size(0),-1,attn.size(-1)).mean(1)
-#            pdb.set_trace()
-            return st
-        else:
-            _, ctxh = self.context_gru(context)
-            st, attn = self.mab(ctxh.transpose(0,1), mel_emb, get_attn=True) # (bsz,1,d)
-#            _attn = attn.reshape(st.size(0),-1,attn.size(-1)).mean(1)
-#            pdb.set_trace()
-            return st.repeat(1,context.size(1),1)
 
 class GST(nn.Module):
     def __init__(self, hp):

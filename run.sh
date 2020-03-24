@@ -13,7 +13,7 @@ tfs_type=single
 
 from=models/mellotron_libritts.pt
 ws=true
-#from=models/tst_tacotron2_161616_single_2_pretrained/checkpoint_4000
+#from=models/tst_tacotron2_161616_single_2_pretrained/checkpoint_18000
 
 name="tst_tacotron2_${nc}${ns}${nq}_${tfs_type}_2"
 

@@ -25,7 +25,7 @@ import pdb
 
 
 # ========== parameters ===========
-checkpoint_path = 'models/tst_tacotron2_8816_single_2_pretrained/checkpoint_31000'
+checkpoint_path = 'models/tst_tacotron2_161616_single_2_pretrained/checkpoint_18000'
 waveglow_path = 'models/waveglow_256channels_v4.pt'
 #waveglow_path = '/home/mike/models/waveglow/waveglow_80000'
 audio_path = 'filelists/libri100_val.txt'
@@ -134,8 +134,10 @@ for i in range(num_support_save):
                 hparams.text_cleaners,
                 arpabet_dict)
             )[None,:].cuda()
+    text_lengths = torch.LongTensor(
+            [len(text_encoded)]).cuda()
 
-    input_dict = {'query': {'text_padded': text_encoded},
+    input_dict = {'query': {'text_padded': text_encoded, 'input_lengths': text_lengths},
             'support': batch['support']}
 
     with torch.no_grad():
@@ -156,8 +158,10 @@ for tidx, test_text in enumerate(test_text_list):
                 hparams.text_cleaners,
                 arpabet_dict)
             )[None,:].cuda()
+    text_lengths = torch.LongTensor(
+            [len(text_encoded)]).cuda()
 
-    input_dict = {'query': {'text_padded': text_encoded},
+    input_dict = {'query': {'text_padded': text_encoded, 'input_lengths': text_lengths},
             'support': batch['support']}
 
     with torch.no_grad():

@@ -789,6 +789,7 @@ class EpisodicTacotron(Tacotron2):
     def inference(self, inputs):
 
         text            = inputs['query']['text_padded'] # torch cuda
+        text_lengths    = inputs['query']['input_lengths'].data
         ref_mels        = inputs['support']['mel_padded'] # torch cuda
         ref_text        = inputs['support']['text_padded']
         ref_text_lengths= inputs['support']['input_lengths'].data
@@ -799,13 +800,14 @@ class EpisodicTacotron(Tacotron2):
         ref_inputs = self.embedding(ref_text).transpose(1, 2)
         ref_embedded_text = self.encoder(ref_inputs, ref_text_lengths)
 
-        embedded_gst = self.gst(embedded_text, ref_mels, ref_embedded_text)
-        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
-                embedded_gst.size(1), self.speaker_embedding_size)
+        embedded_gst = self.gst(embedded_text, text_lengths,
+                ref_mels, ref_embedded_text, ref_text_lengths)
+
+#        embedded_speakers = embedded_gst.new_zeros(embedded_gst.size(0),
+#                embedded_gst.size(1), self.speaker_embedding_size)
 
         encoder_outputs = torch.cat(
-            (embedded_text, embedded_gst, embedded_speakers), dim=2)
-
+            (embedded_text, embedded_gst), dim=2)
         
         mel_outputs, gate_outputs, alignments = self.decoder.inference(encoder_outputs)
         mel_outputs_postnet = self.postnet(mel_outputs)

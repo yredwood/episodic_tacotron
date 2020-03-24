@@ -125,7 +125,8 @@ def warm_start_model(checkpoint_path, model, ignore_layers):
                 print ('Layer {} restored: {}'.format(k, v.shape))
                 restore_dict[k] = v
             else:
-                print ('---- {} NOT restored; shape different'.format(k))
+                print ('---- {} NOT restored; shape different, ckpt: {}, model: {}'\
+                        .format(k, v.shape, model.state_dict()[k].shape))
         else:
             print ('---- {} NOT restored; not in current model'.format(k))
 
